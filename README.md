@@ -51,29 +51,29 @@ ESP32 + DHT22 Sensor -> MQTT (JSON payload) -> HiveMQ Cloud (Managed MQTT Broker
 
 ## Data Flow Description
 
-     -  ESP32 reads temperature and humidity from the DHT22 sensor
+     ESP32 reads temperature and humidity from the DHT22 sensor
       
-     -  Sensor data is published to an MQTT topic as JSON
+     Sensor data is published to an MQTT topic as JSON
       
-     -  HiveMQ Cloud receives and brokers the MQTT messages
+     HiveMQ Cloud receives and brokers the MQTT messages
       
-     -  A Microsoft Fabric Spark notebook subscribes to the topic
+     A Microsoft Fabric Spark notebook subscribes to the topic
       
-     -  Messages are parsed and written to a Delta Lake table
+     Messages are parsed and written to a Delta Lake table
       
-     -  Data becomes available for analytics and visualization
+     Data becomes available for analytics and visualization
 
 ## Usecases
 
-     -  Smart building monitoring
+     Smart building monitoring
       
-     -  HVAC and environmental analytics
+     HVAC and environmental analytics
       
-     -  Digital Twin telemetry ingestion
+     Digital Twin telemetry ingestion
       
-     -  Time-series sensor analysis
+     Time-series sensor analysis
       
-     -  Foundation for predictive analytics and alerting
+     Foundation for predictive analytics and alerting
 
 
 ## Telemetry Payload Format
