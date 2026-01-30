@@ -1,0 +1,97 @@
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <PubSubClient.h>
+#include <DHT.h>
+
+/* ---------- WIFI ---------- */
+const char* WIFI_SSID     = "YOUR_WIFI_NAME";
+const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+
+/* ---------- HIVEMQ ---------- */
+const char* MQTT_BROKER = "smallboss-9582bb6a.a03.euc1.aws.hivemq.cloud";
+const int   MQTT_PORT   = 8883;
+const char* MQTT_USER   = "esp32";          // from Access Management
+const char* MQTT_PASS   = "YOUR_PASSWORD";  // from Access Management
+const char* MQTT_TOPIC  = "esp32/dht11";
+
+/* ---------- DEVICE ---------- */
+const char* DEVICE_ID = "esp32-01";
+
+/* ---------- DHT ---------- */
+#define DHTPIN 4
+#define DHTTYPE DHT11
+
+WiFiClientSecure wifiClient;
+PubSubClient mqttClient(wifiClient);
+DHT dht(DHTPIN, DHTTYPE);
+
+/* ---------- FUNCTIONS ---------- */
+
+void connectWiFi() {
+  Serial.print("Connecting to WiFi");
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected");
+  Serial.print("IP: ");
+  Serial.println(WiFi.localIP());
+}
+
+void connectMQTT() {
+  while (!mqttClient.connected()) {
+    Serial.print("Connecting to HiveMQ...");
+    if (mqttClient.connect(DEVICE_ID, MQTT_USER, MQTT_PASS)) {
+      Serial.println(" connected");
+    } else {
+      Serial.print(" failed, rc=");
+      Serial.print(mqttClient.state());
+      Serial.println(" retrying in 5 seconds");
+      delay(5000);
+    }
+  }
+}
+
+/* ---------- SETUP ---------- */
+
+void setup() {
+  Serial.begin(115200);
+  dht.begin();
+
+  connectWiFi();
+
+  // Skip certificate validation (OK for demo / lab)
+  wifiClient.setInsecure();
+
+  mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
+}
+
+/* ---------- LOOP ---------- */
+
+void loop() {
+  if (!mqttClient.connected()) {
+    connectMQTT();
+  }
+  mqttClient.loop();
+
+  float humidity = dht.readHumidity();
+  float temperature = dht.readTemperature();
+
+  if (isnan(humidity) || isnan(temperature)) {
+    Serial.println("DHT read failed");
+    delay(2000);
+    return;
+  }
+
+  char payload[256];
+  snprintf(payload, sizeof(payload),
+    "{\"deviceId\":\"%s\",\"temperature\":%.2f,\"humidity\":%.2f}",
+    DEVICE_ID, temperature, humidity
+  );
+
+  mqttClient.publish(MQTT_TOPIC, payload);
+  Serial.println(payload);
+
+  delay(5000);  // every 5 seconds
+}
