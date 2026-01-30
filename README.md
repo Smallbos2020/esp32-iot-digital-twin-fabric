@@ -60,8 +60,7 @@ ESP32 publishes sensor readings in JSON format:
   "humidity": 73.9
 }
 
-
-**Data Flow Description**
+## Data Flow Description
 
       ESP32 reads temperature and humidity from the DHT22 sensor
       
@@ -75,7 +74,7 @@ ESP32 publishes sensor readings in JSON format:
       
       Data becomes available for analytics and visualization
 
-**Use Cases**
+## Usecases
 
       Smart building monitoring
       
