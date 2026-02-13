@@ -1,0 +1,203 @@
+%pip install paho-mqtt
+
+import json
+import requests
+import threading
+import time
+from datetime import datetime
+import paho.mqtt.client as mqtt
+
+from pyspark.sql import SparkSession
+
+
+# =====================================================
+# SPARK SESSION
+# =====================================================
+
+spark = SparkSession.builder.getOrCreate()
+
+
+# =====================================================
+# TANDEM CONFIG
+# =====================================================
+
+WEBHOOK_URL = "https://tandem.autodesk.com/api/v1/timeseries/models/urn:adsk.dtm:6-aLJIYSRb698sCTCjydPQ/webhooks/generic?idpath=streamId"
+
+WEBHOOK_TOKEN = "Basic Ok1lQkhUVkk3UkxPOXhjeUdHVVVhVWc="
+
+HEADERS = {
+    "Authorization": WEBHOOK_TOKEN,
+    "Content-Type": "application/json"
+}
+
+MQ135_STREAM_ID = "AQAAAIxFYK-NS0kIlUlmevOC-yIAAAAA"
+
+
+# =====================================================
+# HIVEMQ CONFIG
+# =====================================================
+
+BROKER = "smallboss-9582bb6a.a03.euc1.aws.hivemq.cloud"
+PORT = 8883
+TOPIC = "esp32/mq135"
+
+USERNAME = "esp32"
+PASSWORD = "pw"
+
+
+# =====================================================
+# BUFFER FOR LAKEHOUSE (CRITICAL)
+# =====================================================
+
+buffer = []
+lock = threading.Lock()
+
+BATCH_INTERVAL = 10   # seconds
+MAX_BATCH_SIZE = 50   # safety flush
+
+
+# =====================================================
+# SEND TO TANDEM
+# =====================================================
+
+def send_to_tandem(gas_value):
+
+    payload = [{
+        "streamId": MQ135_STREAM_ID,
+        "value": float(gas_value),
+        "timestamp": int(datetime.utcnow().timestamp() * 1000)
+    }]
+
+    try:
+
+        response = requests.post(
+            WEBHOOK_URL,
+            headers=HEADERS,
+            json=payload,
+            timeout=10
+        )
+
+        if response.status_code in [200, 202]:
+            print(f"✅ Tandem updated | Gas={gas_value}")
+        else:
+            print(f"❌ Tandem error {response.status_code}: {response.text}")
+
+    except Exception as e:
+        print("❌ HTTP failure:", e)
+
+
+# =====================================================
+# LAKEHOUSE WRITER THREAD
+# =====================================================
+
+def lakehouse_writer():
+
+    while True:
+
+        time.sleep(BATCH_INTERVAL)
+
+        with lock:
+
+            if not buffer:
+                continue
+
+            try:
+
+                df = spark.createDataFrame(
+                    buffer,
+                    ["deviceId", "gas_raw", "event_time"]
+                )
+
+                (
+                    df.write
+                    .format("delta")
+                    .mode("append")
+                    .saveAsTable("lh_raw.iot_mq135")
+                )
+
+                print(f"✅ {len(buffer)} rows written to Lakehouse")
+
+                buffer.clear()
+
+            except Exception as e:
+                print("❌ Lakehouse write failed:", e)
+
+
+
+# Start writer thread
+threading.Thread(target=lakehouse_writer, daemon=True).start()
+
+
+# =====================================================
+# MQTT CALLBACKS
+# =====================================================
+
+def on_connect(client, userdata, flags, reason_code, properties):
+
+    if reason_code == 0:
+        print("✅ Connected to HiveMQ")
+        client.subscribe(TOPIC)
+        print("👂 Listening for MQ135 readings...\n")
+    else:
+        print("❌ MQTT Connection Failed")
+
+
+
+def on_message(client, userdata, msg):
+
+    try:
+
+        payload = json.loads(msg.payload.decode())
+
+        gas_value = payload.get("mq135_raw")
+
+        if gas_value is None:
+            print("⚠️ mq135_raw missing in payload")
+            return
+
+        device_id = payload.get("deviceId", "esp32")
+
+        print(f"📡 Gas Reading → {gas_value}")
+
+        # ✅ Send to Tandem
+        send_to_tandem(gas_value)
+
+        # ✅ Add to Lakehouse buffer
+        with lock:
+
+            buffer.append((
+                device_id,
+                float(gas_value),
+                datetime.utcnow()
+            ))
+
+            # Safety flush if burst traffic
+            if len(buffer) >= MAX_BATCH_SIZE:
+                print("⚡ Buffer reached max size — forcing early flush")
+
+    except Exception as e:
+        print("❌ Message processing error:", e)
+
+
+
+# =====================================================
+# START MQTT CLIENT
+# =====================================================
+
+client = mqtt.Client(
+    protocol=mqtt.MQTTv5,
+    callback_api_version=mqtt.CallbackAPIVersion.VERSION2
+)
+
+client.username_pw_set(USERNAME, PASSWORD)
+client.tls_set()
+
+client.on_connect = on_connect
+client.on_message = on_message
+
+
+print("🚀 Starting LIVE MQTT → Tandem + Lakehouse Bridge...\n")
+
+client.connect(BROKER, PORT)
+
+client.loop_forever()
